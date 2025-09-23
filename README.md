@@ -1,5 +1,8 @@
 # Hooky Registry
 
+[![Build and Push Docker Image](https://github.com/hnrobert/hooky-registry/actions/workflows/build.yml/badge.svg)](https://github.com/hnrobert/hooky-registry/actions/workflows/build.yml)
+[![Code Quality Check](https://github.com/hnrobert/hooky-registry/actions/workflows/quality.yml/badge.svg)](https://github.com/hnrobert/hooky-registry/actions/workflows/quality.yml)
+
 A private Docker registry solution with integrated webhook auto-deployment functionality. When new images are pushed to the registry, it automatically pulls the latest images and restarts related containers.
 
 ## Features
@@ -186,6 +189,8 @@ Service orchestration configuration, defining:
 
 ```text
 hooky-registry/
+├── .github/workflows/      # GitHub Actions CI/CD
+│   └── build.yml          # Docker image build and push
 ├── docker-compose.yaml     # Docker Compose configuration
 ├── Dockerfile             # Webhook service image build
 ├── config.yml            # Registry configuration file
@@ -195,6 +200,22 @@ hooky-registry/
 ```
 
 ## Development & Debugging
+
+### CI/CD Pipeline
+
+The project includes automated CI/CD pipeline with GitHub Actions:
+
+- **Build Pipeline** (`build.yml`):
+
+  - Triggers on push to `main` branch or PR
+  - Builds multi-platform Docker images (amd64, arm64)
+  - Pushes to GitHub Container Registry
+  - Creates production docker-compose file
+  - Runs security scans with Trivy
+
+### Pre-built Images
+
+Latest images are automatically built and available at [ghcr.io](ghcr.io/hnrobert/hooky-registry/webhook-receiver:latest)
 
 ### Local Development
 

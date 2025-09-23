@@ -12,13 +12,14 @@ services:
       - mach-network
 
   registry-webhook:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      pull: true
+    image: ghcr.io/hnrobert/hooky-registry:latest
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   pull: true
     container_name: registry-webhook
     restart: unless-stopped
-    pull_policy: build
+    # pull_policy: build
     environment:
       - REGISTRY=127.0.0.1:5000
       - WEBHOOK_PORT=5001
