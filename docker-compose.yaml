@@ -4,7 +4,7 @@ services:
     container_name: registry
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - '5000:5000'
     volumes:
       - registry-data:/var/lib/registry
       - ./config.yml:/etc/docker/registry/config.yml:ro
@@ -15,13 +15,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      pull: true
     container_name: registry-webhook
     restart: unless-stopped
+    pull_policy: build
     environment:
       - REGISTRY=127.0.0.1:5000
       - WEBHOOK_PORT=5001
+      - UPDATE_STRATEGY=recreate # Options: 'recreate' or 'restart'
     ports:
-      - "5001:5001"
+      - '5001:5001'
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
