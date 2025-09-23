@@ -8,8 +8,6 @@ services:
     volumes:
       - registry-data:/var/lib/registry
       - ./config.yml:/etc/docker/registry/config.yml:ro
-    networks:
-      - mach-network
 
   registry-webhook:
     image: ghcr.io/hnrobert/hooky-registry:latest
@@ -28,12 +26,6 @@ services:
       - '5001:5001'
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - mach-network
-
-networks:
-  mach-network:
-    external: true
 
 volumes:
   registry-data:
