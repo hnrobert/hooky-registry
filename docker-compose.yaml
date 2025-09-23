@@ -17,7 +17,7 @@ services:
     #   context: .
     #   dockerfile: Dockerfile
     #   pull: true
-    container_name: registry-webhook
+    container_name: hooky-registry
     restart: unless-stopped
     # pull_policy: build
     environment:
