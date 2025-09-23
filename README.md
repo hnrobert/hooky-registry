@@ -24,7 +24,88 @@ flowchart LR
 
 ## Quick Start
 
+### Deployment Options
+
+This project offers two deployment options:
+
+1. **Combined Image** (Recommended): Registry and webhook receiver in a single container
+2. **Separate Services**: Registry and webhook receiver as separate containers
+
 ### Prerequisites
+
+- Docker Engine 20.10+
+- Docker Compose v2.0+
+
+## Option 1: Combined Image Deployment (Recommended)
+
+### One-Click Deployment
+
+```bash
+# Clone the repository
+git clone https://github.com/hnrobert/hooky-registry.git
+cd hooky-registry
+
+# Deploy combined service
+./deploy-combined.sh deploy
+```
+
+### Manual Deployment
+
+```bash
+# Create external network
+docker network create mach-network
+
+# Deploy using docker-compose
+docker-compose -f docker-compose.combined.yaml up -d
+```
+
+### Combined Image Features
+
+- 🚀 **Single Container**: Registry and webhook receiver in one image
+- 🔧 **Simplified Management**: One container to manage instead of two
+- 📦 **Smaller Footprint**: Reduced resource usage and network complexity
+- 🔄 **Built-in Health Checks**: Comprehensive health monitoring for both services
+
+### Combined Image Architecture
+
+```mermaid
+flowchart LR
+   A[Docker Client] --> B[Combined Container:5000/5001]
+   B --> C[Registry Service:5000]
+   B --> D[Webhook Service:5001]
+   C --> E[Registry Data]
+   D --> F[Docker Socket]
+   B --> G[Supervisor Process Manager]
+```
+
+### Combined Image Management
+
+```bash
+# Deploy the service
+./deploy-combined.sh deploy
+
+# Check service status and health
+./deploy-combined.sh status
+
+# View logs
+./deploy-combined.sh logs
+
+# Stop the service
+./deploy-combined.sh stop
+
+# Build local image
+./deploy-combined.sh build
+```
+
+### Services Available
+
+- **Registry**: `http://localhost:5000` - Docker Registry API
+- **Webhook**: `http://localhost:5001` - Webhook receiver
+- **Health Check**: `http://localhost:5001/health` - Combined health status
+
+## Option 2: Separate Services Deployment
+
+### Setup Requirements
 
 - Docker Engine 20.10+
 - Docker Compose v2.0+

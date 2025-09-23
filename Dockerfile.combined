@@ -1,0 +1,50 @@
+# Multi-stage build for combined registry and webhook receiver
+FROM registry:2 AS registry-base
+
+# Python stage for webhook receiver
+FROM python:3.11-alpine AS webhook-stage
+WORKDIR /app
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+COPY webhook_receiver.py /app/webhook_receiver.py
+
+# Final combined image
+FROM alpine:3.18
+
+# Install required packages
+RUN apk add --no-cache \
+    ca-certificates \
+    python3 \
+    py3-pip \
+    supervisor \
+    docker-cli
+
+# Copy registry binary and configuration
+COPY --from=registry-base /bin/registry /bin/registry
+COPY --from=registry-base /etc/docker/registry/config.yml /etc/docker/registry/config.yml
+
+# Copy webhook receiver
+COPY --from=webhook-stage /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=webhook-stage /app/webhook_receiver.py /app/webhook_receiver.py
+
+# Copy configuration files
+COPY config.yml /etc/docker/registry/config.yml
+COPY healthcheck.sh /usr/local/bin/healthcheck.sh
+
+# Create supervisor configuration
+RUN mkdir -p /etc/supervisor/conf.d
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Create necessary directories
+RUN mkdir -p /var/lib/registry && \
+    chmod +x /usr/local/bin/healthcheck.sh
+
+# Expose ports
+EXPOSE 5000 5001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD /usr/local/bin/healthcheck.sh
+
+# Start supervisor to manage both services
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
