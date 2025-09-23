@@ -1,7 +1,6 @@
 # Hooky Registry
 
 [![Build and Push Docker Image](https://github.com/hnrobert/hooky-registry/actions/workflows/build.yml/badge.svg)](https://github.com/hnrobert/hooky-registry/actions/workflows/build.yml)
-[![Code Quality Check](https://github.com/hnrobert/hooky-registry/actions/workflows/quality.yml/badge.svg)](https://github.com/hnrobert/hooky-registry/actions/workflows/quality.yml)
 
 A private Docker registry solution with integrated webhook auto-deployment functionality. When new images are pushed to the registry, it automatically pulls the latest images and restarts related containers.
 
