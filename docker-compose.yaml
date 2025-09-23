@@ -1,0 +1,36 @@
+services:
+  registry:
+    image: registry:2
+    container_name: registry
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - registry-data:/var/lib/registry
+      - ./config.yml:/etc/docker/registry/config.yml:ro
+    networks:
+      - mach-network
+
+  registry-webhook:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: registry-webhook
+    restart: unless-stopped
+    environment:
+      - REGISTRY=127.0.0.1:5000
+      - WEBHOOK_PORT=5001
+    ports:
+      - "5001:5001"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - mach-network
+
+networks:
+  mach-network:
+    external: true
+
+volumes:
+  registry-data:
+    external: true

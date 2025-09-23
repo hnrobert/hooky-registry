@@ -1,0 +1,19 @@
+version: 0.1
+log:
+  fields:
+    service: registry
+
+http:
+  addr: :5000
+
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+
+notifications:
+  endpoints:
+    - name: registry-webhook
+      url: http://registry-webhook:5001/notifications
+      timeout: 500ms
+      threshold: 5
+      backoff: 1s
