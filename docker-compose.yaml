@@ -7,11 +7,11 @@ services:
     container_name: hooky-registry
     restart: unless-stopped
     environment:
-      - REGISTRY=127.0.0.1:5100
+      - REGISTRY=127.0.0.1:5000
       - WEBHOOK_PORT=5001
       - UPDATE_STRATEGY=recreate # Options: 'recreate' or 'restart'
     ports:
-      - '5100:5000' # Registry port
+      - '5000:5000' # Registry port
       - '5001:5001' # Webhook port
     volumes:
       - registry-data:/var/lib/registry

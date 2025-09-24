@@ -26,6 +26,7 @@ COPY --from=builder /app/webhook-receiver /usr/local/bin/
 
 # Copy supervisor configuration
 COPY config/supervisord.conf /etc/supervisor/supervisord.conf
+COPY config/config.yml /etc/docker/registry/config.yml
 
 # Create log directory
 RUN mkdir -p /var/log/supervisor
