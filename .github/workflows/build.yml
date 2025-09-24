@@ -3,8 +3,13 @@ name: Build and Push Docker Image
 on:
   push:
     branches: [main, develop]
-  pull_request:
-    branches: [main]
+    paths:
+      - '**.go'
+      - 'src/app/go.mod'
+      - 'src/app/go.sum'
+      - 'src/config/config.yml'
+      - 'src/docker/Dockerfile'
+      - '.github/workflows/build.yml'
   workflow_dispatch:
 
 env:
