@@ -18,18 +18,18 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o webhook-receiver 
 # Production stage - based on registry image
 FROM registry:2
 
-# Install dependencies for webhook receiver and supervisor
-RUN apk update && apk --no-cache add ca-certificates curl supervisor
+# Install runtime dependencies
+RUN apk update && apk --no-cache add curl
 
 # Copy the webhook receiver binary
 COPY --from=builder /app/webhook-receiver /usr/local/bin/
 
-# Copy supervisor configuration
-COPY config/supervisord.conf /etc/supervisor/supervisord.conf
+# Copy registry configuration (kept as a default, docker-compose may mount another)
 COPY config/config.yml /etc/docker/registry/config.yml
 
-# Create log directory
-RUN mkdir -p /var/log/supervisor
+# Copy entrypoint script
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Expose both registry (5000) and webhook (5001) ports
 EXPOSE 5000 5001
@@ -38,5 +38,5 @@ EXPOSE 5000 5001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:5000/v2/ && curl -f http://localhost:5001/health || exit 1
 
-# Override entrypoint to use supervisor
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]
+# Use our entrypoint to manage both registry and webhook
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

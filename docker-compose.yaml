@@ -1,9 +1,9 @@
 services:
   hooky-registry:
-    build:
-        context: src/
-        dockerfile: docker/Dockerfile
-    # image: ghcr.io/hnrobert/hooky-registry:latest
+    # build:
+    #   context: src/
+    #   dockerfile: docker/Dockerfile
+    image: ghcr.io/hnrobert/hooky-registry:latest
     container_name: hooky-registry
     restart: unless-stopped
     environment:
@@ -15,7 +15,6 @@ services:
       - '5001:5001' # Webhook port
     volumes:
       - registry-data:/var/lib/registry
-      - ./config.yml:/etc/docker/registry/config.yml:ro
       - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
