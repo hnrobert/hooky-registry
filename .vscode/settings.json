@@ -1,7 +1,13 @@
 {
     "cSpell.words": [
+        "addgroup",
+        "adduser",
+        "appgroup",
+        "appuser",
         "asctime",
         "Buildx",
+        "GOOS",
+        "installsuffix",
         "levelname"
     ]
 }

@@ -1,387 +1,249 @@
 # Hooky Registry
 
-[![Build and Push Docker Image](https://github.com/hnrobert/hooky-registry/actions/workflows/build.yml/badge.svg)](https://github.com/hnrobert/hooky-registry/actions/workflows/build.yml)
+🐳 **Hooky Registry** 是一个集成了 Docker Registry 和 Webhook 接收器的 Go 应用程序，提供完整的私有镜像仓库解决方案。
 
-A private Docker registry solution with integrated webhook auto-deployment functionality. When new images are pushed to the registry, it automatically pulls the latest images and restarts related containers.
+## ✨ 特性
 
-## Features
+- **集成化部署**: 单个 Docker 镜像包含 Registry 和 Webhook 接收器
+- **自动化更新**: 监听 Registry 推送事件，自动更新使用该镜像的容器
+- **多种更新策略**: 支持`recreate`（重建）和`restart`（重启）两种更新模式
+- **健康检查**: 内置健康检查端点，监控服务状态
+- **多架构支持**: 支持 AMD64 和 ARM64 架构
+- **生产就绪**: 基于官方 Registry 镜像，使用 Supervisor 管理多进程
 
-- 🐳 **Private Docker Registry**: Based on official Docker Registry 2.0
-- 🔄 **Auto Deployment**: Automatically trigger container restarts when images are pushed
-- 📡 **Webhook Support**: Listen to image push events via webhooks
-- 🔧 **Flexible Configuration**: Support for custom configuration and environment variables
-- 🚀 **Ready to Use**: One-click startup with docker-compose
+## 🚀 快速开始
 
-## System Architecture
-
-```mermaid
-flowchart LR
-   A[Docker Client] --> B[Registry:5000]
-   B --> C[Webhook:5001]
-   B --> D[Registry Data]
-   C --> E[Docker Socket]
-```
-
-## Quick Start
-
-### Deployment Options
-
-This project offers two deployment options:
-
-1. **Combined Image** (Recommended): Registry and webhook receiver in a single container
-2. **Separate Services**: Registry and webhook receiver as separate containers
-
-### Prerequisites
-
-- Docker Engine 20.10+
-- Docker Compose v2.0+
-
-## Option 1: Combined Image Deployment (Recommended)
-
-### One-Click Deployment
+### 使用 Docker Compose（推荐）
 
 ```bash
-# Clone the repository
+# 克隆项目
 git clone https://github.com/hnrobert/hooky-registry.git
 cd hooky-registry
 
-# Deploy combined service
-./deploy-combined.sh deploy
-```
-
-### Manual Deployment
-
-```bash
-# Create external network
-docker network create mach-network
-
-# Deploy using docker-compose
-docker-compose -f docker-compose.combined.yaml up -d
-```
-
-### Combined Image Features
-
-- 🚀 **Single Container**: Registry and webhook receiver in one image
-- 🔧 **Simplified Management**: One container to manage instead of two
-- 📦 **Smaller Footprint**: Reduced resource usage and network complexity
-- 🔄 **Built-in Health Checks**: Comprehensive health monitoring for both services
-
-### Combined Image Architecture
-
-```mermaid
-flowchart LR
-   A[Docker Client] --> B[Combined Container:5000/5001]
-   B --> C[Registry Service:5000]
-   B --> D[Webhook Service:5001]
-   C --> E[Registry Data]
-   D --> F[Docker Socket]
-   B --> G[Supervisor Process Manager]
-```
-
-### Combined Image Management
-
-```bash
-# Deploy the service
-./deploy-combined.sh deploy
-
-# Check service status and health
-./deploy-combined.sh status
-
-# View logs
-./deploy-combined.sh logs
-
-# Stop the service
-./deploy-combined.sh stop
-
-# Build local image
-./deploy-combined.sh build
-```
-
-### Services Available
-
-- **Registry**: `http://localhost:5000` - Docker Registry API
-- **Webhook**: `http://localhost:5001` - Webhook receiver
-- **Health Check**: `http://localhost:5001/health` - Combined health status
-
-## Option 2: Separate Services Deployment
-
-### Setup Requirements
-
-- Docker Engine 20.10+
-- Docker Compose v2.0+
-- External network and volumes created (see setup below)
-
-### 1. Create External Resources
-
-```bash
-# Create external network
-docker network create mach-network
-
-# Create external volume
-docker volume create registry-data
-```
-
-### 2. Clone Project
-
-```bash
-git clone <repository-url>
-cd hooky-registry
-```
-
-### 3. Start Services
-
-```bash
-# Start all services
+# 启动服务
 docker-compose up -d
-
-# Check service status
-docker-compose ps
-
-# View logs
-docker-compose logs -f
 ```
 
-### 4. Verify Services
+### 使用预构建镜像
 
 ```bash
-# Check Registry service
-curl http://localhost:5000/v2/_catalog
+# 拉取最新镜像
+docker pull ghcr.io/hnrobert/hooky-registry:latest
 
-# Check Webhook service
+# 运行容器
+docker run -d \
+  --name hooky-registry \
+  -p 5000:5000 \
+  -p 5001:5001 \
+  -v registry-data:/var/lib/registry \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e UPDATE_STRATEGY=recreate \
+  ghcr.io/hnrobert/hooky-registry:latest
+```
+
+## 📖 配置说明
+
+### 环境变量
+
+| 变量名            | 默认值           | 说明                              |
+| ----------------- | ---------------- | --------------------------------- |
+| `REGISTRY`        | `127.0.0.1:5000` | Registry 服务地址                 |
+| `WEBHOOK_PORT`    | `5001`           | Webhook 接收器端口                |
+| `UPDATE_STRATEGY` | `recreate`       | 更新策略：`recreate` 或 `restart` |
+
+### 端口映射
+
+- **5000**: Docker Registry HTTP API
+- **5001**: Webhook 接收器 API
+
+### 数据持久化
+
+- `/var/lib/registry`: Registry 数据存储目录
+- `/var/run/docker.sock`: Docker 守护进程套接字（用于容器管理）
+
+## 🔧 Registry 配置
+
+项目包含一个预配置的`config.yml`文件，启用了 Webhook 通知功能：
+
+```yaml
+version: 0.1
+log:
+  fields:
+    service: registry
+storage:
+  cache:
+    blobdescriptor: inmemory
+  filesystem:
+    rootdirectory: /var/lib/registry
+http:
+  addr: :5000
+  headers:
+    X-Content-Type-Options: [nosniff]
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3
+notifications:
+  endpoints:
+    - name: hooky-webhook
+      url: http://127.0.0.1:5001/webhook
+      timeout: 10s
+      threshold: 3
+      backoff: 1s
+      headers:
+        Authorization: [Bearer your-secret-token]
+```
+
+## 📡 API 端点
+
+### Registry (端口 5000)
+
+- `GET /v2/`: Registry API 健康检查
+- `GET /v2/_catalog`: 列出所有仓库
+- `GET /v2/{name}/tags/list`: 列出镜像标签
+
+### Webhook 接收器 (端口 5001)
+
+- `GET /`: 服务信息
+- `GET /health`: 健康检查
+- `POST /webhook`: 接收 Registry Webhook 事件
+
+### 健康检查示例
+
+```bash
+# Registry健康检查
+curl http://localhost:5000/v2/
+
+# Webhook接收器健康检查
 curl http://localhost:5001/health
 ```
 
-## Usage
+## 🔄 更新策略
 
-### Push Images to Private Registry
+### Recreate 模式（默认）
 
-```bash
-# 1. Build image
-docker build -t my-app:latest .
+- 停止并删除旧容器
+- 使用新镜像创建容器
+- 适用于无状态应用
 
-# 2. Tag image
-docker tag my-app:latest localhost:5000/my-app:latest
+### Restart 模式
 
-# 3. Push image (automatically triggers webhook)
-docker push localhost:5000/my-app:latest
-```
+- 简单重启现有容器
+- 容器会拉取新镜像（如果策略配置为 always）
+- 适用于开发环境
 
-### Run Containers (Will be Auto-restarted)
+## 🛠️ 开发
 
-```bash
-# Run container using private registry image
-docker run -d --name my-app-container localhost:5000/my-app:latest
-```
-
-When you push a new version of `my-app:latest` image, the webhook will automatically:
-
-1. Pull the latest image
-2. Handle containers according to the configured update strategy
-
-## Container Update Strategies
-
-The system supports two container update strategies, controlled by the `UPDATE_STRATEGY` environment variable:
-
-### 🔄 Recreate Strategy (Recommended, Default)
+### 本地构建
 
 ```bash
-UPDATE_STRATEGY=recreate
-```
+# 克隆项目
+git clone https://github.com/hnrobert/hooky-registry.git
+cd hooky-registry
 
-**Workflow:**
+# 构建Go应用
+go mod download
+go build -o webhook-receiver main.go
 
-1. Pull the latest image
-2. Get complete configuration of existing containers (port mappings, environment variables, volumes, networks, etc.)
-3. Stop and remove old containers
-4. Recreate containers with new image and same configuration
-5. Reconnect to original networks
+# 构建Docker镜像
+docker build -t hooky-registry:local .
 
-**Pros:**
-
-- ✅ Ensures use of latest image
-- ✅ Complete container reinitialization
-- ✅ Cleans up old container state
-
-**Cons:**
-
-- ❌ Brief service interruption
-- ❌ Container ID will change
-
-### 🔁 Restart Strategy
-
-```bash
-UPDATE_STRATEGY=restart
-```
-
-**Workflow:**
-
-1. Pull the latest image
-2. Simply restart existing containers
-
-**Pros:**
-
-- ✅ Fast restart
-- ✅ Container ID remains unchanged
-
-**Cons:**
-
-- ❌ May still use old image (Docker caching mechanism)
-- ❌ Does not clean internal container state
-
-### Strategy Selection Guidelines
-
-| Scenario          | Recommended Strategy | Reason                                  |
-| ----------------- | -------------------- | --------------------------------------- |
-| Production        | `recreate`           | Ensure latest image, avoid cache issues |
-| Development       | `recreate`           | Get latest features and fixes           |
-| Quick Testing     | `restart`            | Reduce restart time                     |
-| Stateful Services | `recreate` + volumes | Data persistence + code updates         |
-
-## Configuration
-
-### Environment Variables
-
-| Variable Name     | Default Value    | Description                                        |
-| ----------------- | ---------------- | -------------------------------------------------- |
-| `REGISTRY`        | `127.0.0.1:5000` | Registry service address                           |
-| `WEBHOOK_PORT`    | `5001`           | Webhook service port                               |
-| `UPDATE_STRATEGY` | `recreate`       | Container update strategy: `recreate` or `restart` |
-
-### Configuration Files
-
-#### config.yml
-
-Main configuration file for Registry, including:
-
-- HTTP service configuration
-- Storage backend configuration
-- Webhook notification configuration
-
-#### docker-compose.yaml
-
-Service orchestration configuration, defining:
-
-- Registry service (port 5000)
-- Webhook service (port 5001)
-- Network and volume configuration
-
-## File Structure
-
-```text
-hooky-registry/
-├── .github/workflows/      # GitHub Actions CI/CD
-│   └── build.yml          # Docker image build and push
-├── docker-compose.yaml     # Docker Compose configuration
-├── Dockerfile             # Webhook service image build
-├── config.yml            # Registry configuration file
-├── webhook_receiver.py   # Webhook service main program
-├── requirements.txt      # Python dependencies
-└── README.md            # Project documentation
-```
-
-## Development & Debugging
-
-### CI/CD Pipeline
-
-The project includes automated CI/CD pipeline with GitHub Actions:
-
-- **Build Pipeline** (`build.yml`):
-
-  - Triggers on push to `main` branch or PR
-  - Builds multi-platform Docker images (amd64, arm64)
-  - Pushes to GitHub Container Registry
-  - Creates production docker-compose file
-  - Runs security scans with Trivy
-
-### Pre-built Images
-
-Latest images are automatically built and available at [ghcr.io](ghcr.io/hnrobert/hooky-registry/webhook-receiver:latest)
-
-### Local Development
-
-```bash
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Set environment variables
-export REGISTRY=127.0.0.1:5000
-export WEBHOOK_PORT=5001
-
-# Run webhook service
-python webhook_receiver.py
-```
-
-### View Logs
-
-```bash
-# View all service logs
-docker-compose logs -f
-
-# View specific service logs
-docker-compose logs -f registry
-docker-compose logs -f registry-webhook
-```
-
-### Rebuild Services
-
-```bash
-# Rebuild and start
-docker-compose up -d --build
-
-# Force rebuild
-docker-compose build --no-cache
+# 运行测试
 docker-compose up -d
 ```
 
-## Troubleshooting
+### 项目结构
 
-### Common Issues
-
-1. **Services won't start**
-
-   - Check if external network exists: `docker network ls | grep mach-network`
-   - Check if external volume exists: `docker volume ls | grep registry-data`
-
-2. **Webhook not working**
-
-   - Check if Docker socket is properly mounted
-   - View webhook service logs: `docker-compose logs registry-webhook`
-
-3. **Image push fails**
-
-   - Confirm Registry service is running: `curl http://localhost:5000/v2/_catalog`
-   - Check network connectivity and firewall settings
-
-4. **Containers not auto-restarting**
-   - Ensure container image name exactly matches pushed image name
-   - Check webhook logs to see if push events are received
-
-### Debug Mode
-
-Modify log level in `webhook_receiver.py`:
-
-```python
-logging.basicConfig(
-    level=logging.DEBUG,  # Change to DEBUG
-    format='[%(asctime)s] %(levelname)s %(message)s',
-)
+```
+hooky-registry/
+├── main.go              # Webhook接收器主程序
+├── go.mod               # Go模块定义
+├── go.sum               # Go依赖校验
+├── Dockerfile           # 多阶段构建配置
+├── supervisord.conf     # Supervisor进程管理配置
+├── docker-compose.yaml  # Docker Compose配置
+├── config.yml           # Registry配置文件
+└── .github/workflows/   # CI/CD配置
+    └── build.yml        # 自动构建和发布
 ```
 
-## Security Considerations
+## 🚢 部署
 
-- Configure HTTPS and authentication for production environments
-- Restrict Docker socket access permissions
-- Regularly backup registry data
-- Monitor service status and resource usage
+### GitHub Actions 自动构建
 
-## License
+项目配置了自动 CI/CD 流水线：
 
-[Add your license information]
+- **main 分支**: 构建并推送 `latest` 标签
+- **develop 分支**: 构建并推送 `develop` 标签
+- **PR**: 构建测试，不推送
 
-## Contributing
+### 手动部署
 
-Issues and Pull Requests are welcome!
+```bash
+# 部署到生产环境
+docker pull ghcr.io/hnrobert/hooky-registry:latest
+docker stop hooky-registry || true
+docker rm hooky-registry || true
+docker run -d \
+  --name hooky-registry \
+  --restart unless-stopped \
+  -p 5000:5000 \
+  -p 5001:5001 \
+  -v registry-data:/var/lib/registry \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/hnrobert/hooky-registry:latest
+```
+
+## 🔍 监控和日志
+
+### 查看日志
+
+```bash
+# 查看所有日志
+docker logs hooky-registry
+
+# 实时跟踪日志
+docker logs -f hooky-registry
+
+# 查看特定服务日志
+docker exec hooky-registry tail -f /var/log/supervisor/registry.log
+docker exec hooky-registry tail -f /var/log/supervisor/webhook.log
+```
+
+### 监控服务状态
+
+```bash
+# 检查容器状态
+docker ps | grep hooky-registry
+
+# 检查进程状态
+docker exec hooky-registry supervisorctl status
+
+# 健康检查
+curl -f http://localhost:5000/v2/ && curl -f http://localhost:5001/health
+```
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+1. Fork 项目
+2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
+3. 提交更改 (`git commit -m 'Add some amazing feature'`)
+4. 推送到分支 (`git push origin feature/amazing-feature`)
+5. 开启 Pull Request
+
+## 📄 许可证
+
+本项目基于 MIT 许可证开源。详见 [LICENSE](LICENSE) 文件。
+
+## 🙏 致谢
+
+- [Docker Registry](https://docs.docker.com/registry/) - 官方 Docker 镜像仓库
+- [Gorilla Mux](https://github.com/gorilla/mux) - Go HTTP 路由器
+- [Supervisor](http://supervisord.org/) - 进程管理工具
 
 ---
 
-**Note**: This is a basic version of an auto-deployment solution. For production use, please perform security hardening and feature extensions according to actual requirements.
+**⭐ 如果这个项目对你有帮助，请给个 Star 支持一下！**

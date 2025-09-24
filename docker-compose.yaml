@@ -1,40 +1,22 @@
 services:
-  registry:
-    image: registry:2
-    container_name: registry
-    restart: unless-stopped
-    ports:
-      - '5000:5000'
-    volumes:
-      - registry-data:/var/lib/registry
-      - ./config.yml:/etc/docker/registry/config.yml:ro
-    networks:
-      - mach-network
-
-  registry-webhook:
-    image: ghcr.io/hnrobert/hooky-registry:latest
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile
-    #   pull: true
+  hooky-registry:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # image: ghcr.io/hnrobert/hooky-registry:latest
     container_name: hooky-registry
     restart: unless-stopped
-    # pull_policy: build
     environment:
-      - REGISTRY=127.0.0.1:5000
+      - REGISTRY=127.0.0.1:5100
       - WEBHOOK_PORT=5001
       - UPDATE_STRATEGY=recreate # Options: 'recreate' or 'restart'
     ports:
-      - '5001:5001'
+      - '5100:5000' # Registry port
+      - '5001:5001' # Webhook port
     volumes:
+      - registry-data:/var/lib/registry
+      - ./config.yml:/etc/docker/registry/config.yml:ro
       - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - mach-network
-
-networks:
-  mach-network:
-    external: true
 
 volumes:
   registry-data:
-    external: true
