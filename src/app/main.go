@@ -30,6 +30,7 @@ func main() {
 
 	router := mux.NewRouter()
 	router.HandleFunc("/webhook", handler.handleWebhook).Methods("POST")
+	router.HandleFunc("/notifications", handler.handleWebhook).Methods("POST")
 	router.HandleFunc("/health", handler.healthCheck).Methods("GET")
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
