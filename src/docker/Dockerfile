@@ -6,14 +6,11 @@ WORKDIR /app
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates
 
-# Copy go mod files
-COPY app/go.mod app/go.sum ./
+# Copy entire app directory
+COPY app/ ./
 
 # Download dependencies
 RUN go mod download
-
-# Copy source code
-COPY app/main.go ./
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o webhook-receiver .

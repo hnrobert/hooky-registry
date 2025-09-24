@@ -12,9 +12,13 @@
         "installsuffix",
         "levelname",
         "nosniff",
+        "resp",
         "rootdirectory",
+        "sreq",
+        "sresp",
         "storagedriver",
         "supervisorctl",
-        "supervisord"
+        "supervisord",
+        "upresp"
     ]
 }
