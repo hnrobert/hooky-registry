@@ -1,8 +1,8 @@
 services:
   hooky-registry:
     build:
-      context: .
-      dockerfile: Dockerfile
+        context: src/
+        dockerfile: docker/Dockerfile
     # image: ghcr.io/hnrobert/hooky-registry:latest
     container_name: hooky-registry
     restart: unless-stopped

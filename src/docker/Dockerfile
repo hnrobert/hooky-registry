@@ -7,13 +7,13 @@ WORKDIR /app
 RUN apk add --no-cache git ca-certificates
 
 # Copy go mod files
-COPY go.mod go.sum ./
+COPY app/go.mod app/go.sum ./
 
 # Download dependencies
 RUN go mod download
 
 # Copy source code
-COPY main.go ./
+COPY app/main.go ./
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o webhook-receiver .
@@ -28,7 +28,7 @@ RUN apk update && apk --no-cache add ca-certificates curl supervisor
 COPY --from=builder /app/webhook-receiver /usr/local/bin/
 
 # Copy supervisor configuration
-COPY supervisord.conf /etc/supervisor/supervisord.conf
+COPY config/supervisord.conf /etc/supervisor/supervisord.conf
 
 # Create log directory
 RUN mkdir -p /var/log/supervisor

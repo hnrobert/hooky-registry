@@ -155,7 +155,7 @@ docker-compose up -d
 
 ### 项目结构
 
-```
+```text
 hooky-registry/
 ├── main.go              # Webhook接收器主程序
 ├── go.mod               # Go模块定义

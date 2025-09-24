@@ -5,9 +5,16 @@
         "appgroup",
         "appuser",
         "asctime",
+        "blobdescriptor",
         "Buildx",
         "GOOS",
+        "inmemory",
         "installsuffix",
-        "levelname"
+        "levelname",
+        "nosniff",
+        "rootdirectory",
+        "storagedriver",
+        "supervisorctl",
+        "supervisord"
     ]
 }

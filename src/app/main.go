@@ -1,0 +1,568 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gorilla/mux"
+)
+
+type Config struct {
+	Registry       string
+	WebhookPort    int
+	UpdateStrategy string
+}
+
+type WebhookHandler struct {
+	config *Config
+}
+
+type RegistryWebhook struct {
+	Events []struct {
+		ID        string `json:"id"`
+		Timestamp string `json:"timestamp"`
+		Action    string `json:"action"`
+		Target    struct {
+			MediaType  string `json:"mediaType"`
+			Digest     string `json:"digest"`
+			Repository string `json:"repository"`
+			Tag        string `json:"tag"`
+		} `json:"target"`
+		Request struct {
+			ID        string `json:"id"`
+			Addr      string `json:"addr"`
+			Host      string `json:"host"`
+			Method    string `json:"method"`
+			UserAgent string `json:"useragent"`
+		} `json:"request"`
+		Actor struct {
+			Name string `json:"name"`
+		} `json:"actor"`
+		Source struct {
+			Addr       string `json:"addr"`
+			InstanceID string `json:"instanceID"`
+		} `json:"source"`
+	} `json:"events"`
+}
+
+func NewWebhookHandler() *WebhookHandler {
+	config := &Config{
+		Registry:       getEnv("REGISTRY", "127.0.0.1:5000"),
+		WebhookPort:    getEnvInt("WEBHOOK_PORT", 5001),
+		UpdateStrategy: getEnv("UPDATE_STRATEGY", "recreate"),
+	}
+
+	return &WebhookHandler{
+		config: config,
+	}
+}
+
+func (wh *WebhookHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var webhook RegistryWebhook
+	if err := json.NewDecoder(r.Body).Decode(&webhook); err != nil {
+		log.Printf("Failed to decode webhook payload: %v", err)
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	for _, event := range webhook.Events {
+		if event.Action == "push" {
+			imageName := fmt.Sprintf("%s/%s:%s", wh.config.Registry, event.Target.Repository, event.Target.Tag)
+			log.Printf("Processing push event for image: %s", imageName)
+
+			if err := wh.handleImagePush(imageName); err != nil {
+				log.Printf("Failed to handle image push: %v", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+func (wh *WebhookHandler) handleImagePush(imageName string) error {
+	// Pull the latest image
+	log.Printf("Pulling image: %s", imageName)
+	if err := wh.pullImage(imageName); err != nil {
+		return fmt.Errorf("failed to pull image %s: %w", imageName, err)
+	}
+
+	// Find containers using this image
+	containers, err := wh.findContainersUsingImage(imageName)
+	if err != nil {
+		return fmt.Errorf("failed to find containers: %w", err)
+	}
+
+	if len(containers) == 0 {
+		log.Printf("No containers found using image: %s", imageName)
+		return nil
+	}
+
+	log.Printf("Found %d containers using image %s", len(containers), imageName)
+
+	switch wh.config.UpdateStrategy {
+	case "recreate":
+		return wh.recreateContainers(containers, imageName)
+	case "restart":
+		return wh.restartContainers(containers)
+	default:
+		return fmt.Errorf("unknown update strategy: %s", wh.config.UpdateStrategy)
+	}
+}
+
+func (wh *WebhookHandler) pullImage(imageName string) error {
+	// Pull image using Docker Engine API over unix socket
+	client := newDockerClient()
+	// imageName may include tag
+	url := fmt.Sprintf("http://unix/v1.41/images/create?fromImage=%s", imageName)
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("docker pull failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("docker pull api error: status=%d body=%s", resp.StatusCode, string(body))
+	}
+	// consume body
+	io.Copy(io.Discard, resp.Body)
+	log.Printf("Successfully pulled image: %s", imageName)
+	return nil
+}
+
+func (wh *WebhookHandler) findContainersUsingImage(imageName string) ([]string, error) {
+	client := newDockerClient()
+	url := "http://unix/v1.41/containers/json?all=1"
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("docker api error: status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	var list []struct {
+		ID    string   `json:"Id"`
+		Names []string `json:"Names"`
+		Image string   `json:"Image"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return nil, err
+	}
+
+	var containers []string
+	for _, c := range list {
+		// names may have a leading /
+		name := strings.TrimPrefix(c.Names[0], "/")
+		if c.Image == imageName || strings.HasPrefix(c.Image, strings.Split(imageName, ":")[0]+":") {
+			containers = append(containers, name)
+		}
+	}
+	return containers, nil
+}
+
+func (wh *WebhookHandler) recreateContainers(containers []string, newImage string) error {
+	for _, containerName := range containers {
+		log.Printf("Processing container for recreation: %s", containerName)
+
+		// Inspect the container via Docker API to get configuration and labels
+		data, err := dockerInspect(containerName)
+		if err != nil {
+			log.Printf("Failed to inspect container %s: %v", containerName, err)
+			continue
+		}
+
+		// Extract useful parts from inspect JSON
+		labels := map[string]string{}
+		if cfg, ok := data["Config"].(map[string]interface{}); ok {
+			if l, ok := cfg["Labels"].(map[string]interface{}); ok {
+				for k, v := range l {
+					labels[k] = fmt.Sprint(v)
+				}
+			}
+		}
+
+		var envs []string
+		if cfg, ok := data["Config"].(map[string]interface{}); ok {
+			if ev, ok := cfg["Env"].([]interface{}); ok {
+				for _, e := range ev {
+					envs = append(envs, fmt.Sprint(e))
+				}
+			}
+		}
+
+		var binds []string
+		var ports []string
+		var restartPolicy string
+		if hc, ok := data["HostConfig"].(map[string]interface{}); ok {
+			if b, ok := hc["Binds"].([]interface{}); ok {
+				for _, bi := range b {
+					binds = append(binds, fmt.Sprint(bi))
+				}
+			}
+			if rp, ok := hc["RestartPolicy"].(map[string]interface{}); ok {
+				restartPolicy = fmt.Sprint(rp["Name"])
+			}
+			if pb, ok := hc["PortBindings"].(map[string]interface{}); ok {
+				for containerPort, binding := range pb {
+					if arr, ok := binding.([]interface{}); ok && len(arr) > 0 {
+						if m, ok := arr[0].(map[string]interface{}); ok {
+							hostPort := fmt.Sprint(m["HostPort"])
+							parts := strings.Split(containerPort, "/")
+							ports = append(ports, fmt.Sprintf("%s:%s", hostPort, parts[0]))
+						}
+					}
+				}
+			}
+		}
+
+		var networks []string
+		if ns, ok := data["NetworkSettings"].(map[string]interface{}); ok {
+			if nets, ok := ns["Networks"].(map[string]interface{}); ok {
+				for netName := range nets {
+					networks = append(networks, netName)
+				}
+			}
+		}
+
+		// Determine if this container is managed by compose or stack
+		service := labels["com.docker.compose.service"]
+		stack := labels["com.docker.stack.namespace"]
+
+		// Record the original image name to attempt removal later
+		var oldImage string
+		if cfg, ok := data["Config"].(map[string]interface{}); ok {
+			if img, ok := cfg["Image"]; ok {
+				oldImage = fmt.Sprint(img)
+			}
+		}
+
+		// Stop and remove the old container
+		if err := wh.stopAndRemoveContainer(containerName); err != nil {
+			log.Printf("Failed to stop/remove container %s: %v", containerName, err)
+			continue
+		}
+
+		// Try to recreate container in-place where possible.
+		// If the container belonged to a stack (Swarm) attempt to update the service via API.
+		if stack != "" && service != "" {
+			fullService := fmt.Sprintf("%s_%s", stack, service)
+			log.Printf("Detected stack '%s', attempting service update for %s to image %s via API", stack, fullService, newImage)
+			client := newDockerClient()
+			// GET service to retrieve spec and version
+			svcURL := fmt.Sprintf("http://unix/v1.41/services/%s", fullService)
+			resp, err := client.Get(svcURL)
+			if err == nil {
+				if resp.StatusCode == 200 {
+					var svc map[string]interface{}
+					if err := json.NewDecoder(resp.Body).Decode(&svc); err == nil {
+						if resp.Body != nil {
+							resp.Body.Close()
+						}
+						// extract spec and version
+						if spec, ok := svc["Spec"].(map[string]interface{}); ok {
+							// set new image
+							if task, ok := spec["TaskTemplate"].(map[string]interface{}); ok {
+								if containerSpec, ok := task["ContainerSpec"].(map[string]interface{}); ok {
+									containerSpec["Image"] = newImage
+								}
+							}
+							version := 1
+							if v, ok := svc["Version"].(map[string]interface{}); ok {
+								if idx, ok := v["Index"].(float64); ok {
+									version = int(idx)
+								}
+							}
+							updateURL := fmt.Sprintf("http://unix/v1.41/services/%s/update?version=%d", fullService, version)
+							bodyBytes, _ := json.Marshal(spec)
+							upr, _ := http.NewRequest("POST", updateURL, strings.NewReader(string(bodyBytes)))
+							upr.Header.Set("Content-Type", "application/json")
+							upresp, err := client.Do(upr)
+							if err == nil {
+								if upresp.Body != nil {
+									upresp.Body.Close()
+								}
+								if upresp.StatusCode < 400 {
+									log.Printf("Requested service update for %s", fullService)
+									if oldImage != "" {
+										removeImageByAPI(oldImage)
+									}
+									continue
+								}
+								log.Printf("Service update API returned status %d for %s", upresp.StatusCode, fullService)
+							} else {
+								log.Printf("Service update API request failed for %s: %v", fullService, err)
+							}
+						}
+					}
+				}
+				if resp.Body != nil {
+					resp.Body.Close()
+				}
+			}
+		}
+
+		// Fallback: create container via Docker Engine API preserving envs, binds, ports, labels, restart and networks
+		log.Printf("Falling back to API-based recreation for container %s", containerName)
+		client := newDockerClient()
+
+		createBody := map[string]interface{}{
+			"Image": newImage,
+		}
+		if len(envs) > 0 {
+			createBody["Env"] = envs
+		}
+		hostConfig := map[string]interface{}{}
+		if len(binds) > 0 {
+			hostConfig["Binds"] = binds
+		}
+		if restartPolicy != "" {
+			hostConfig["RestartPolicy"] = map[string]interface{}{"Name": restartPolicy}
+		}
+		if len(ports) > 0 {
+			pb := map[string]interface{}{}
+			for _, p := range ports {
+				parts := strings.Split(p, ":")
+				if len(parts) == 2 {
+					host := parts[0]
+					container := parts[1]
+					pb[container+"/tcp"] = []map[string]string{{"HostPort": host}}
+				}
+			}
+			hostConfig["PortBindings"] = pb
+		}
+		if len(hostConfig) > 0 {
+			createBody["HostConfig"] = hostConfig
+		}
+		if len(labels) > 0 {
+			createBody["Labels"] = labels
+		}
+		if len(networks) > 0 {
+			netCfg := map[string]interface{}{"EndpointsConfig": map[string]interface{}{}}
+			for _, n := range networks {
+				netCfg["EndpointsConfig"].(map[string]interface{})[n] = map[string]interface{}{}
+			}
+			createBody["NetworkingConfig"] = netCfg
+		}
+
+		createURL := fmt.Sprintf("http://unix/v1.41/containers/create?name=%s", containerName)
+		rb, _ := json.Marshal(createBody)
+		req, _ := http.NewRequest("POST", createURL, strings.NewReader(string(rb)))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("Failed to create container %s via API: %v", containerName, err)
+		} else {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode >= 400 {
+				log.Printf("Create container API error for %s: status=%d body=%s", containerName, resp.StatusCode, string(body))
+			} else {
+				var createResp map[string]interface{}
+				if err := json.Unmarshal(body, &createResp); err == nil {
+					if id, ok := createResp["Id"].(string); ok {
+						startURL := fmt.Sprintf("http://unix/v1.41/containers/%s/start", id)
+						sreq, _ := http.NewRequest("POST", startURL, nil)
+						sresp, _ := client.Do(sreq)
+						if sresp != nil {
+							sresp.Body.Close()
+						}
+						if sresp != nil && sresp.StatusCode >= 400 {
+							log.Printf("Failed to start container %s via API: status=%d", containerName, sresp.StatusCode)
+						} else {
+							log.Printf("Created and started container %s via API", containerName)
+						}
+					}
+				}
+			}
+		}
+
+		if oldImage != "" {
+			removeImageByAPI(oldImage)
+		}
+	}
+
+	return nil
+}
+
+func (wh *WebhookHandler) restartContainers(containers []string) error {
+	client := newDockerClient()
+	for _, containerName := range containers {
+		log.Printf("Restarting container: %s", containerName)
+		url := fmt.Sprintf("http://unix/v1.41/containers/%s/restart?t=10", containerName)
+		req, _ := http.NewRequest("POST", url, nil)
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("Failed to restart container %s: %v", containerName, err)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			body, _ := io.ReadAll(resp.Body)
+			log.Printf("Failed to restart container %s: status=%d body=%s", containerName, resp.StatusCode, string(body))
+			continue
+		}
+		log.Printf("Successfully restarted container: %s", containerName)
+	}
+	return nil
+}
+
+func (wh *WebhookHandler) stopAndRemoveContainer(containerName string) error {
+	client := newDockerClient()
+	// Stop
+	stopURL := fmt.Sprintf("http://unix/v1.41/containers/%s/stop?t=10", containerName)
+	req, _ := http.NewRequest("POST", stopURL, nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to stop container: %w", err)
+	}
+	resp.Body.Close()
+
+	// Remove
+	removeURL := fmt.Sprintf("http://unix/v1.41/containers/%s?force=1&v=1", containerName)
+	req, _ = http.NewRequest("DELETE", removeURL, nil)
+	resp, err = client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to remove container: %w", err)
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// newDockerClient returns an http.Client that talks to the docker unix socket
+func newDockerClient() *http.Client {
+	tr := &http.Transport{}
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return net.Dial("unix", "/var/run/docker.sock")
+	}
+	return &http.Client{Transport: tr}
+}
+
+// helper to inspect container
+func dockerInspect(containerName string) (map[string]interface{}, error) {
+	client := newDockerClient()
+	url := fmt.Sprintf("http://unix/v1.41/containers/%s/json", containerName)
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("inspect api error: status=%d body=%s", resp.StatusCode, string(body))
+	}
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// removeImageByAPI removes image by name or id via Docker Engine API
+func removeImageByAPI(image string) error {
+	client := newDockerClient()
+	url := fmt.Sprintf("http://unix/v1.41/images/%s?force=1&noprune=0", image)
+	req, _ := http.NewRequest("DELETE", url, nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to remove image: status=%d body=%s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+func (wh *WebhookHandler) healthCheck(w http.ResponseWriter, r *http.Request) {
+	// Simple health check - just check if service is running
+	// We can test Docker access by checking socket existence
+	dockerSocketExists := false
+	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+		dockerSocketExists = true
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":                  "healthy",
+		"timestamp":               time.Now().UTC().Format(time.RFC3339),
+		"docker_socket_available": dockerSocketExists,
+		"config": map[string]interface{}{
+			"registry":        wh.config.Registry,
+			"webhook_port":    wh.config.WebhookPort,
+			"update_strategy": wh.config.UpdateStrategy,
+		},
+	})
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.Println("Starting Hooky Registry webhook receiver...")
+
+	handler := NewWebhookHandler()
+
+	router := mux.NewRouter()
+	router.HandleFunc("/webhook", handler.handleWebhook).Methods("POST")
+	router.HandleFunc("/health", handler.healthCheck).Methods("GET")
+	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"service": "hooky-registry",
+			"version": "2.0.0-go",
+			"status":  "running",
+		})
+	}).Methods("GET")
+
+	server := &http.Server{
+		Addr:         fmt.Sprintf(":%d", handler.config.WebhookPort),
+		Handler:      router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+	}
+
+	log.Printf("Webhook receiver listening on port %d", handler.config.WebhookPort)
+	log.Printf("Registry: %s", handler.config.Registry)
+	log.Printf("Update strategy: %s", handler.config.UpdateStrategy)
+
+	log.Fatal(server.ListenAndServe())
+}
