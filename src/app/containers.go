@@ -9,7 +9,21 @@ import (
 	"strings"
 )
 
+// extractOriginalImageName extracts the original image name without registry prefix
+func extractOriginalImageName(registryImage string) string {
+	// Remove registry prefix (e.g., "127.0.0.1:5000/beacon:latest" -> "beacon:latest")
+	parts := strings.Split(registryImage, "/")
+	if len(parts) > 1 {
+		return strings.Join(parts[1:], "/")
+	}
+	return registryImage
+}
+
 func (wh *WebhookHandler) recreateContainers(containers []string, newImage string) error {
+	// Extract original image name without registry prefix
+	originalImageName := extractOriginalImageName(newImage)
+	log.Printf("Using original image name: %s (derived from %s)", originalImageName, newImage)
+	
 	for _, containerName := range containers {
 		log.Printf("Processing container for recreation: %s", containerName)
 
@@ -88,7 +102,7 @@ func (wh *WebhookHandler) recreateContainers(containers []string, newImage strin
 
 		if stack != "" && service != "" {
 			fullService := fmt.Sprintf("%s_%s", stack, service)
-			log.Printf("Detected stack '%s', attempting service update for %s to image %s via API", stack, fullService, newImage)
+			log.Printf("Detected stack '%s', attempting service update for %s to image %s via API", stack, fullService, originalImageName)
 			client := newDockerClient()
 			svcURL := fmt.Sprintf("http://unix/v1.41/services/%s", fullService)
 			resp, err := client.Get(svcURL)
@@ -102,7 +116,7 @@ func (wh *WebhookHandler) recreateContainers(containers []string, newImage strin
 						if spec, ok := svc["Spec"].(map[string]interface{}); ok {
 							if task, ok := spec["TaskTemplate"].(map[string]interface{}); ok {
 								if containerSpec, ok := task["ContainerSpec"].(map[string]interface{}); ok {
-									containerSpec["Image"] = newImage
+									containerSpec["Image"] = originalImageName
 								}
 							}
 							version := 1
@@ -143,7 +157,7 @@ func (wh *WebhookHandler) recreateContainers(containers []string, newImage strin
 		log.Printf("Falling back to API-based recreation for container %s", containerName)
 		client := newDockerClient()
 
-		createBody := map[string]interface{}{"Image": newImage}
+		createBody := map[string]interface{}{"Image": originalImageName}
 		if len(envs) > 0 {
 			createBody["Env"] = envs
 		}

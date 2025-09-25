@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func (wh *WebhookHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +57,10 @@ func (wh *WebhookHandler) handleImagePush(imageName string) error {
 	}
 
 	log.Printf("Found %d containers using image %s", len(containers), imageName)
+
+	// Wait 5 seconds before updating containers
+	log.Printf("Waiting 5 seconds before updating containers...")
+	time.Sleep(5 * time.Second)
 
 	switch wh.config.UpdateStrategy {
 	case "recreate":
