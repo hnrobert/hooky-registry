@@ -18,9 +18,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o webhook-receiver 
 # Production stage - based on registry image
 FROM registry:2
 
-# Install runtime dependencies
-RUN apk update && apk --no-cache add curl
-
 # Copy the webhook receiver binary
 COPY --from=builder /app/webhook-receiver /usr/local/bin/
 
