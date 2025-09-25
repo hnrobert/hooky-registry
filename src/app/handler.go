@@ -161,7 +161,7 @@ func (wh *WebhookHandler) findContainersUsingImage(imageName string) ([]string, 
 	}
 
 	var containers []string
-	originalImageName := extractOriginalImageName(imageName)
+	targetBaseImage := extractOriginalImageName(imageName)
 
 	for _, c := range list {
 		if len(c.Names) == 0 {
@@ -169,16 +169,16 @@ func (wh *WebhookHandler) findContainersUsingImage(imageName string) ([]string, 
 		}
 
 		name := strings.TrimPrefix(c.Names[0], "/")
+		containerBaseImage := extractOriginalImageName(c.Image)
 
-		// Match both registry-prefixed and original image names
-		// Also check if container is actually running or can be recreated
-		if c.Image == imageName || c.Image == originalImageName ||
-			strings.HasPrefix(c.Image, strings.Split(imageName, ":")[0]+":") ||
-			strings.HasPrefix(c.Image, strings.Split(originalImageName, ":")[0]+":") {
-
-			log.Printf("Found container %s using image %s (state: %s)", name, c.Image, c.State)
+		// Only match containers that use the exact same base image (without registry prefix)
+		// This prevents cross-contamination between different images
+		if containerBaseImage == targetBaseImage {
+			log.Printf("Found container %s using image %s (matches %s, state: %s)", name, c.Image, imageName, c.State)
 			containers = append(containers, name)
 		}
 	}
+
+	log.Printf("Found %d containers using base image %s", len(containers), targetBaseImage)
 	return containers, nil
 }

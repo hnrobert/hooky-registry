@@ -20,9 +20,7 @@ func extractOriginalImageName(registryImage string) string {
 }
 
 func (wh *WebhookHandler) recreateContainers(containers []string, newImage string) error {
-	// Extract original image name without registry prefix
-	originalImageName := extractOriginalImageName(newImage)
-	log.Printf("Using original image name: %s (derived from %s)", originalImageName, newImage)
+	log.Printf("Recreating containers with new image: %s", newImage)
 
 	for _, containerName := range containers {
 		log.Printf("Processing container for recreation: %s", containerName)
@@ -32,6 +30,26 @@ func (wh *WebhookHandler) recreateContainers(containers []string, newImage strin
 			log.Printf("Failed to inspect container %s: %v. Skipping recreation.", containerName, err)
 			continue
 		}
+
+		// Get the container's current image to ensure we only update containers using the correct image
+		var currentImage string
+		if cfg, ok := data["Config"].(map[string]interface{}); ok {
+			if img, ok := cfg["Image"]; ok {
+				currentImage = fmt.Sprint(img)
+			}
+		}
+
+		// Extract the base image name for comparison (without registry prefix)
+		currentBaseImage := extractOriginalImageName(currentImage)
+		newBaseImage := extractOriginalImageName(newImage)
+
+		// Only recreate if this container is actually using the image we're updating
+		if currentBaseImage != newBaseImage {
+			log.Printf("Skipping container %s: uses image %s, not updating to %s", containerName, currentImage, newImage)
+			continue
+		}
+
+		log.Printf("Container %s uses image %s, updating to %s", containerName, currentImage, newImage)
 
 		labels := map[string]string{}
 		if cfg, ok := data["Config"].(map[string]interface{}); ok {
@@ -95,7 +113,7 @@ func (wh *WebhookHandler) recreateContainers(containers []string, newImage strin
 
 		if stack != "" && service != "" {
 			fullService := fmt.Sprintf("%s_%s", stack, service)
-			log.Printf("Detected stack '%s', attempting service update for %s to image %s via API", stack, fullService, originalImageName)
+			log.Printf("Detected stack '%s', attempting service update for %s to image %s via API", stack, fullService, newImage)
 			client := newDockerClient()
 			svcURL := fmt.Sprintf("http://unix/v1.41/services/%s", fullService)
 			resp, err := client.Get(svcURL)
@@ -109,7 +127,7 @@ func (wh *WebhookHandler) recreateContainers(containers []string, newImage strin
 						if spec, ok := svc["Spec"].(map[string]interface{}); ok {
 							if task, ok := spec["TaskTemplate"].(map[string]interface{}); ok {
 								if containerSpec, ok := task["ContainerSpec"].(map[string]interface{}); ok {
-									containerSpec["Image"] = originalImageName
+									containerSpec["Image"] = newImage
 								}
 							}
 							version := 1
@@ -148,7 +166,7 @@ func (wh *WebhookHandler) recreateContainers(containers []string, newImage strin
 		log.Printf("Falling back to API-based recreation for container %s", containerName)
 		client := newDockerClient()
 
-		createBody := map[string]interface{}{"Image": originalImageName}
+		createBody := map[string]interface{}{"Image": newImage}
 		if len(envs) > 0 {
 			createBody["Env"] = envs
 		}
