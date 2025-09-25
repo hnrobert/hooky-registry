@@ -7,8 +7,43 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
+
+// Request deduplication to prevent processing duplicate webhook events
+var (
+	processedEvents = make(map[string]time.Time)
+	eventMutex      sync.RWMutex
+)
+
+// isEventProcessed checks if this event was recently processed to avoid duplicates
+func isEventProcessed(imageName string) bool {
+	eventMutex.RLock()
+	lastProcessed, exists := processedEvents[imageName]
+	eventMutex.RUnlock()
+
+	if !exists {
+		return false
+	}
+
+	// Consider event as duplicate if processed within last 10 seconds
+	return time.Since(lastProcessed) < 10*time.Second
+}
+
+// markEventProcessed marks an event as processed
+func markEventProcessed(imageName string) {
+	eventMutex.Lock()
+	processedEvents[imageName] = time.Now()
+
+	// Clean up old entries (older than 1 minute)
+	for event, timestamp := range processedEvents {
+		if time.Since(timestamp) > time.Minute {
+			delete(processedEvents, event)
+		}
+	}
+	eventMutex.Unlock()
+}
 
 func (wh *WebhookHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -26,13 +61,22 @@ func (wh *WebhookHandler) handleWebhook(w http.ResponseWriter, r *http.Request) 
 	for _, event := range webhook.Events {
 		if event.Action == "push" {
 			imageName := fmt.Sprintf("%s/%s:%s", wh.config.Registry, event.Target.Repository, event.Target.Tag)
-			log.Printf("Processing push event for image: %s", imageName)
 
-			if err := wh.handleImagePush(imageName); err != nil {
-				log.Printf("Failed to handle image push: %v", err)
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
-				return
+			// Check for duplicate events to prevent multiple processing
+			if isEventProcessed(imageName) {
+				log.Printf("Skipping duplicate push event for image: %s", imageName)
+				continue
 			}
+
+			log.Printf("Processing push event for image: %s", imageName)
+			markEventProcessed(imageName)
+
+			// Process in background to avoid timeout
+			go func(img string) {
+				if err := wh.handleImagePush(img); err != nil {
+					log.Printf("Failed to handle image push: %v", err)
+				}
+			}(imageName)
 		}
 	}
 
@@ -110,15 +154,29 @@ func (wh *WebhookHandler) findContainersUsingImage(imageName string) ([]string, 
 		ID    string   `json:"Id"`
 		Names []string `json:"Names"`
 		Image string   `json:"Image"`
+		State string   `json:"State"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
 		return nil, err
 	}
 
 	var containers []string
+	originalImageName := extractOriginalImageName(imageName)
+
 	for _, c := range list {
+		if len(c.Names) == 0 {
+			continue
+		}
+
 		name := strings.TrimPrefix(c.Names[0], "/")
-		if c.Image == imageName || strings.HasPrefix(c.Image, strings.Split(imageName, ":")[0]+":") {
+
+		// Match both registry-prefixed and original image names
+		// Also check if container is actually running or can be recreated
+		if c.Image == imageName || c.Image == originalImageName ||
+			strings.HasPrefix(c.Image, strings.Split(imageName, ":")[0]+":") ||
+			strings.HasPrefix(c.Image, strings.Split(originalImageName, ":")[0]+":") {
+
+			log.Printf("Found container %s using image %s (state: %s)", name, c.Image, c.State)
 			containers = append(containers, name)
 		}
 	}

@@ -23,13 +23,13 @@ func (wh *WebhookHandler) recreateContainers(containers []string, newImage strin
 	// Extract original image name without registry prefix
 	originalImageName := extractOriginalImageName(newImage)
 	log.Printf("Using original image name: %s (derived from %s)", originalImageName, newImage)
-	
+
 	for _, containerName := range containers {
 		log.Printf("Processing container for recreation: %s", containerName)
 
 		data, err := dockerInspect(containerName)
 		if err != nil {
-			log.Printf("Failed to inspect container %s: %v", containerName, err)
+			log.Printf("Failed to inspect container %s: %v. Skipping recreation.", containerName, err)
 			continue
 		}
 
@@ -88,13 +88,6 @@ func (wh *WebhookHandler) recreateContainers(containers []string, newImage strin
 		service := labels["com.docker.compose.service"]
 		stack := labels["com.docker.stack.namespace"]
 
-		var oldImage string
-		if cfg, ok := data["Config"].(map[string]interface{}); ok {
-			if img, ok := cfg["Image"]; ok {
-				oldImage = fmt.Sprint(img)
-			}
-		}
-
 		if err := wh.stopAndRemoveContainer(containerName); err != nil {
 			log.Printf("Failed to stop/remove container %s: %v", containerName, err)
 			continue
@@ -136,9 +129,7 @@ func (wh *WebhookHandler) recreateContainers(containers []string, newImage strin
 								}
 								if upresp.StatusCode < 400 {
 									log.Printf("Requested service update for %s", fullService)
-									if oldImage != "" {
-										removeImageByAPI(oldImage)
-									}
+									// Don't remove old image to avoid "No such image" errors
 									continue
 								}
 								log.Printf("Service update API returned status %d for %s", upresp.StatusCode, fullService)
@@ -226,9 +217,8 @@ func (wh *WebhookHandler) recreateContainers(containers []string, newImage strin
 			}
 		}
 
-		if oldImage != "" {
-			removeImageByAPI(oldImage)
-		}
+		// Don't remove old image to keep it available for future operations
+		// This prevents "No such image" errors when containers are recreated
 	}
 
 	return nil

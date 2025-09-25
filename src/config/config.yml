@@ -15,6 +15,6 @@ notifications:
   endpoints:
     - name: registry-webhook
       url: http://127.0.0.1:5001/notifications
-      timeout: 500ms
-      threshold: 5
-      backoff: 1s
+      timeout: 30s
+      threshold: 3
+      backoff: 5s
